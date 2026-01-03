@@ -9,7 +9,6 @@
   <div id="tracker-app">
     <header id="drag-handle">
       <div class="drag-title">🖕Simon & Sheepy 🖕</div>
-      <div id="session-timer" class="session-timer">—</div>
       <div id="settings-icon" title="Settings">⚙️</div>
     </header>
     <main>
@@ -19,6 +18,7 @@
             <tr>
               <th>Job</th>
               <th>EXP Token</th>
+              <th>Combined</th>
               <th>BXP/Hour</th>
               <th>BXP/Min</th>
               <th>Session Time</th>
@@ -28,8 +28,8 @@
         </table>
       </section>
       <div class="controls">
-        <button id="reset-tracking">Reset All</button>
         <button id="toggle-auto-select">Auto-Select Active Jobs</button>
+        <button id="pause-session-btn">Pause / Resume Timer</button>
       </div>
     </main>
     <div id="resize-handle" title="Resize"></div>

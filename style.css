@@ -84,6 +84,7 @@ body {
 #settings-icon:hover {
   background: #444;
 }
+ 
 
 #bxp-summary-section {
   margin: 0;
@@ -121,27 +122,29 @@ body {
 }
 
 .bxp-value {
-  color: #00bfff;
+  color: #ffffff;
   font-weight: bold;
 }
 
 .bxp-per-hour {
-  color: #ffff00;
+  color: #ffffff;
   font-weight: bold;
 }
 
 .bxp-per-minute {
-  color: #ffff00;
+  color: #ffffff;
   font-weight: bold;
 }
 
 .session-time {
-  color: #aaa;
+  color: #ffffff;
   font-size: 0.85em;
+  font-weight: bold;
 }
 
 .controls {
   display: flex;
+  flex-direction: column;
   gap: 0.5em;
   margin-top: 0.5em;
 }

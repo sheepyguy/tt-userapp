@@ -34,10 +34,14 @@ const STORAGE_KEYS = {
 // State
 let bxpLogs = {}; // { jobKey: [{ time, bxp }, ...] }
 let currentBxp = {}; // { jobKey: number }
+let currentPrimary = {}; // { jobKey: number } - primary token amount
+let currentSecondary = {}; // { jobKey: number } - secondary token amount
 let sessionStart = {}; // { jobKey: timestamp }
 let globalSessionStart = null; // Global timer start (first BXP gain across all jobs)
 let autoSelectJobs = true;
 let showZeroBxp = false;
+let sessionPaused = false;
+let pausedSessionElapsed = {}; // { jobKey: elapsedMs }
 
 // DOM elements
 const trackerApp = document.getElementById('tracker-app');
@@ -71,6 +75,8 @@ function loadSettings() {
       currentBxp = data.currentBxp || {};
       sessionStart = data.sessionStart || {};
       globalSessionStart = data.globalSessionStart || null;
+      sessionPaused = data.sessionPaused || false;
+      pausedSessionElapsed = data.pausedSessionElapsed || {};
     } catch (e) {
       console.warn("Failed to load tracking data:", e);
     }
@@ -97,10 +103,54 @@ function saveTrackingData() {
       currentBxp,
       sessionStart,
       globalSessionStart
+      , sessionPaused,
+      pausedSessionElapsed
     }));
   } catch (e) {
     console.warn("Failed to save tracking data:", e);
   }
+}
+
+// Pause the session timers (snapshot elapsed times)
+function pauseSession() {
+  sessionPaused = true;
+  pausedSessionElapsed = {};
+  const now = Date.now();
+  Object.keys(sessionStart).forEach(jobKey => {
+    const start = sessionStart[jobKey];
+    if (start) pausedSessionElapsed[jobKey] = now - start;
+  });
+  saveTrackingData();
+  updateDisplay();
+  const btn = document.getElementById('pause-session-btn');
+  if (btn) {
+    btn.textContent = 'Pause/Start Timer';
+    btn.title = 'Resume session';
+  }
+}
+
+// Resume the session timers (restore start times shifted by paused elapsed)
+function resumeSession() {
+  const now = Date.now();
+  Object.keys(pausedSessionElapsed).forEach(jobKey => {
+    const elapsed = pausedSessionElapsed[jobKey];
+    if (typeof elapsed === 'number') {
+      sessionStart[jobKey] = now - elapsed;
+    }
+  });
+  pausedSessionElapsed = {};
+  sessionPaused = false;
+  saveTrackingData();
+  updateDisplay();
+  const btn = document.getElementById('pause-session-btn');
+  if (btn) {
+    btn.textContent = 'Pause/Start Timer';
+    btn.title = 'Pause session';
+  }
+}
+
+function toggleSessionPause() {
+  if (sessionPaused) resumeSession(); else pauseSession();
 }
 
 // Setup event listeners
@@ -140,17 +190,6 @@ function setupEventListeners() {
     window.location.reload();
   };
   
-  document.getElementById('reset-tracking').onclick = () => {
-    if (confirm('Reset all BXP tracking data?')) {
-      bxpLogs = {};
-      currentBxp = {};
-      sessionStart = {};
-      globalSessionStart = null;
-      saveTrackingData();
-      updateDisplay();
-    }
-  };
-  
   document.getElementById('toggle-auto-select').onclick = () => {
     autoSelectJobs = !autoSelectJobs;
     localStorage.setItem(STORAGE_KEYS.AUTO_SELECT, autoSelectJobs);
@@ -158,6 +197,15 @@ function setupEventListeners() {
     document.getElementById('toggle-auto-select').textContent = autoSelectJobs ? 'Disable Auto-Select' : 'Enable Auto-Select';
     updateDisplay();
   };
+
+  // Pause / Resume session button
+  const pauseBtn = document.getElementById('pause-session-btn');
+  if (pauseBtn) {
+    pauseBtn.onclick = () => toggleSessionPause();
+    // set initial label based on saved state
+    pauseBtn.textContent = 'Pause/Start Timer';
+    pauseBtn.title = sessionPaused ? 'Resume session' : 'Pause session';
+  }
   
   // ESC key to pin window
   window.addEventListener('keydown', (e) => {
@@ -207,8 +255,12 @@ window.addEventListener('message', (event) => {
       return;
     }
     
-    const amount = combinedAmount;
+    const amount = secondaryAmount; // Use secondary for tracking BXP rate
     const previousAmount = currentBxp[jobKey];
+    
+    // Store both amounts for display
+    currentPrimary[jobKey] = primaryAmount;
+    currentSecondary[jobKey] = secondaryAmount;
     
     // Initialize tracking for this job
     if (typeof previousAmount !== "number") {
@@ -223,6 +275,10 @@ window.addEventListener('message', (event) => {
         bxpLogs[jobKey] = [{ time: now, bxp: amount }];
         // Reset session start - will start again on next gain
         delete sessionStart[jobKey];
+        // Also clear any paused elapsed time so it doesn't get restored on resume
+        if (pausedSessionElapsed && pausedSessionElapsed[jobKey] != null) {
+          delete pausedSessionElapsed[jobKey];
+        }
       } else {
         // BXP increased - start session timer if not already started
         if (!sessionStart[jobKey]) {
@@ -315,15 +371,6 @@ function formatDuration(ms) {
 
 // Update display
 function updateDisplay() {
-  // Update global session timer in header
-  const timerElement = document.getElementById('session-timer');
-  if (globalSessionStart !== null) {
-    const elapsed = Date.now() - globalSessionStart;
-    timerElement.textContent = formatDuration(elapsed);
-  } else {
-    timerElement.textContent = '—';
-  }
-  
   const jobsToShow = [];
   
   Object.keys(JOB_BXP_KEYS).forEach(jobKey => {
@@ -337,12 +384,24 @@ function updateDisplay() {
     const bxpPerHour = calculateBxpPerHour(jobKey);
     const bxpPerMinute = calculateBxpPerMinute(jobKey);
     const startTime = sessionStart[jobKey];
-    const sessionTime = startTime ? Date.now() - startTime : null;
+    let sessionTime = null;
+    if (startTime) {
+      if (sessionPaused && pausedSessionElapsed[jobKey] != null) {
+        sessionTime = pausedSessionElapsed[jobKey];
+      } else {
+        sessionTime = Date.now() - startTime;
+      }
+    }
+    
+    const primary = currentPrimary[jobKey] || 0;
+    const secondary = currentSecondary[jobKey] || 0;
+    const combined = primary + secondary;
     
     jobsToShow.push({
       jobKey,
       label: jobInfo.label,
       bxp,
+      combined,
       bxpPerHour,
       bxpPerMinute,
       sessionTime
@@ -359,7 +418,7 @@ function updateDisplay() {
   
   // Render table
   if (jobsToShow.length === 0) {
-    summaryTbody.innerHTML = '<tr><td colspan="5" class="no-data">No BXP data to display</td></tr>';
+    summaryTbody.innerHTML = '<tr><td colspan="6" class="no-data">No BXP data to display</td></tr>';
     return;
   }
   
@@ -380,6 +439,7 @@ function updateDisplay() {
       <tr>
         <td>${job.label}</td>
         <td><span class="bxp-value">${job.bxp.toLocaleString()}</span></td>
+        <td><span class="bxp-value">${job.combined.toLocaleString()}</span></td>
         <td>${bxpPerHourDisplay}</td>
         <td>${bxpPerMinuteDisplay}</td>
         <td class="session-time">${sessionTimeDisplay}</td>
