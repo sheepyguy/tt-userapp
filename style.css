@@ -149,6 +149,24 @@ body {
   margin-top: 0.5em;
 }
 
+.session-log {
+  margin-top: 0.5em;
+  max-height: 120px;
+  overflow: auto;
+  background: rgba(40,42,45,0.6);
+  border: 1px solid rgba(0,191,255,0.12);
+  padding: 0.4em;
+  font-size: 12px;
+  color: #ddd;
+  border-radius: 6px;
+}
+.session-log .log-entry {
+  margin: 0.15em 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .controls button {
   flex: 1;
   background: #2c2f34;

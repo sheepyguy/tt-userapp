@@ -42,6 +42,7 @@ let autoSelectJobs = true;
 let showZeroBxp = false;
 let sessionPaused = false;
 let pausedSessionElapsed = {}; // { jobKey: elapsedMs }
+let currentBxpPerMinute = {}; // cache last displayed per-minute values
 
 // DOM elements
 const trackerApp = document.getElementById('tracker-app');
@@ -77,6 +78,7 @@ function loadSettings() {
       globalSessionStart = data.globalSessionStart || null;
       sessionPaused = data.sessionPaused || false;
       pausedSessionElapsed = data.pausedSessionElapsed || {};
+      debugger;
     } catch (e) {
       console.warn("Failed to load tracking data:", e);
     }
@@ -108,6 +110,26 @@ function saveTrackingData() {
     }));
   } catch (e) {
     console.warn("Failed to save tracking data:", e);
+  }
+}
+
+// In-page logging helper (keeps last 100 entries)
+function addLog(message) {
+  try {
+    const container = document.getElementById('session-log');
+    if (!container) return;
+    const ts = new Date().toLocaleTimeString();
+    const entry = document.createElement('div');
+    entry.className = 'log-entry';
+    entry.textContent = `[${ts}] ${message}`;
+    container.appendChild(entry);
+    // Keep scroll at bottom
+    container.scrollTop = container.scrollHeight;
+    // Trim old entries
+    const children = container.children;
+    while (children.length > 100) container.removeChild(children[0]);
+  } catch (e) {
+    console.warn('Failed to add log entry', e);
   }
 }
 
@@ -272,6 +294,7 @@ window.addEventListener('message', (event) => {
       if (amount < previousAmount) {
         // BXP decreased (sold/given away) - reset tracking
         console.log(`BXP decreased for ${jobKey}: ${previousAmount} → ${amount}`);
+        addLog(`BXP decreased for ${jobKey}: ${previousAmount} → ${amount}`);
         bxpLogs[jobKey] = [{ time: now, bxp: amount }];
         // Reset session start - will start again on next gain
         delete sessionStart[jobKey];
@@ -292,6 +315,7 @@ window.addEventListener('message', (event) => {
         
         // Add to log
         bxpLogs[jobKey].push({ time: now, bxp: amount });
+        addLog(`BXP increased for time: ${now}, bxp: ${amount}`);
         
         // Keep only last 120 entries (2 hours at 1 entry per minute)
         if (bxpLogs[jobKey].length > 120) {
@@ -309,49 +333,33 @@ window.addEventListener('message', (event) => {
 
 // Calculate BXP per hour for a job
 function calculateBxpPerHour(jobKey) {
-  const log = bxpLogs[jobKey] || [];
-  if (log.length < 2) return null;
-  
-  const now = Date.now();
-  const first = log[0];
-  const last = log[log.length - 1];
-  
-  const duration = last.time - first.time;
-  const bxpGained = last.bxp - first.bxp;
-  
-  if (duration <= 0 || bxpGained <= 0) return null;
-  
-  const hours = duration / (1000 * 60 * 60);
-  if (hours <= 0) return null;
-  
-  // Use recent window (last 10 minutes) for more accurate rate if available
-  const RECENT_WINDOW = 10 * 60 * 1000; // 10 minutes
-  const recentEntries = log.filter(entry => now - entry.time <= RECENT_WINDOW);
-  
-  if (recentEntries.length >= 2) {
-    const recentFirst = recentEntries[0];
-    const recentLast = recentEntries[recentEntries.length - 1];
-    const recentDuration = recentLast.time - recentFirst.time;
-    const recentBxp = recentLast.bxp - recentFirst.bxp;
-    
-    if (recentDuration > 0 && recentBxp > 0) {
-      const recentHours = recentDuration / (1000 * 60 * 60);
-      if (recentHours > 0) {
-        // Weighted average: 70% recent, 30% session
-        const recentRate = recentBxp / recentHours;
-        const sessionRate = bxpGained / hours;
-        return Math.round(recentRate * 0.7 + sessionRate * 0.3);
-      }
-    }
-  }
-  
-  return Math.round(bxpGained / hours);
+  const perMinute = calculateBxpPerMinute(jobKey);
+  //return perMinute !== null ? Math.round(perMinute * 60) : null;
+   const tmpph = Math.sumPrecise = (perMinute * 60)  ;
+  return tmpph.toFixed(0);
 }
 
 // Calculate BXP per minute for a job
+// Calculate BXP per minute for a job using current BXP and session time
 function calculateBxpPerMinute(jobKey) {
-  const perHour = calculateBxpPerHour(jobKey);
-  return perHour !== null ? Math.round(perHour / 60) : null;
+  const bxp = currentBxp[jobKey];
+  if (typeof bxp !== 'number' || bxp <= 0) return null;
+
+  // Determine elapsed session time (ms). Use paused snapshot if paused.
+  let elapsedMs = null;
+  if (sessionPaused && pausedSessionElapsed[jobKey] != null) {
+    elapsedMs = pausedSessionElapsed[jobKey];
+  } else if (sessionStart[jobKey]) {
+    elapsedMs = Date.now() - sessionStart[jobKey];
+  }
+
+  if (!elapsedMs || elapsedMs <= 0) return null;
+
+  // per-minute = bxp / (elapsedSeconds) * 60 === bxp * 60000 / elapsedMs
+ // return Math.round((bxp * 60000) / elapsedMs);
+
+  const tmppm = Math.sumPrecise = (bxp * 60000) / elapsedMs;
+  return tmppm.toFixed(2);
 }
 
 // Format time duration
@@ -383,6 +391,16 @@ function updateDisplay() {
     
     const bxpPerHour = calculateBxpPerHour(jobKey);
     const bxpPerMinute = calculateBxpPerMinute(jobKey);
+    // Log per-minute changes
+    if (bxpPerMinute !== null) {
+      if (currentBxpPerMinute[jobKey] !== bxpPerMinute) {
+        addLog(`${jobInfo.label} BXP/min updated: ${bxpPerMinute.toLocaleString()}`);
+        currentBxpPerMinute[jobKey] = bxpPerMinute;
+      }
+    } else if (currentBxpPerMinute[jobKey] != null) {
+      // cleared (no rate)
+      delete currentBxpPerMinute[jobKey];
+    }
     const startTime = sessionStart[jobKey];
     let sessionTime = null;
     if (startTime) {
